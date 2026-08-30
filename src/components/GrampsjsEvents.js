@@ -14,6 +14,36 @@ import './GrampsjsFormEventRef.js'
 import './GrampsjsFormNewEvent.js'
 import './GrampsjsObjectForm.js'
 import '@material/mwc-button'
+import {asteriskIcon} from '../icons.js'
+import {eventParticipantTitle} from './eventParticipantTitle.js'
+
+export function getEventType(obj) {
+  if (typeof obj.type === 'string') {
+    return obj.type
+  }
+  return obj.type.string || obj.type.value
+}
+
+export function isBirthEvent(obj) {
+  return getEventType(obj) === 'Birth'
+}
+
+export function getEventTitle(profile, useSummary, translate = key => key) {
+  if (useSummary && profile.summary) {
+    return profile.summary.replace(' - ', ': ')
+  }
+
+  const role = profile.role || ''
+  const hiddenRoles = [
+    'Primary',
+    'Family',
+    translate('Primary'),
+    translate('Family'),
+  ]
+  const roleLabel =
+    role && !hiddenRoles.includes(role) ? `(${translate(role)})` : ''
+  return [translate(profile.type), roleLabel].filter(Boolean).join(' ')
+}
 
 export class GrampsjsEvents extends GrampsjsEditableList {
   static get styles() {
@@ -23,6 +53,20 @@ export class GrampsjsEvents extends GrampsjsEditableList {
         md-list-item {
           --md-list-item-top-space: 16px;
           --md-list-item-bottom-space: 16px;
+        }
+
+        .birth-symbol {
+          display: inline-flex;
+          align-items: center;
+        }
+
+        .birth-symbol svg {
+          width: 18px;
+          height: 18px;
+        }
+
+        .birth-symbol svg path {
+          fill: var(--grampsjs-body-font-color-40);
         }
       `,
     ]
@@ -37,6 +81,7 @@ export class GrampsjsEvents extends GrampsjsEditableList {
       sorted: {type: Boolean},
       hideAge: {type: Boolean},
       defaultRole: {type: String},
+      eventProfiles: {type: Object},
     }
   }
 
@@ -52,12 +97,15 @@ export class GrampsjsEvents extends GrampsjsEditableList {
     this.hasShare = true
     this.hasReorder = true
     this.defaultRole = 'Primary'
+    this.eventProfiles = null
   }
 
   row(obj, i) {
     const j = this.data.indexOf(obj)
     const objProfile = {...obj, profile: this.profile[j]}
-    const typeKey = typeof obj.type === 'string' ? obj.type : obj.type?.value
+    const typeKey = getEventType(obj)
+    const birth = isBirthEvent(obj)
+    const age = objProfile.profile.age
     return html`
       <md-list-item
         type="button"
@@ -89,11 +137,11 @@ export class GrampsjsEvents extends GrampsjsEditableList {
           'start',
           eventTypeIconPath[typeKey] || null
         )}
-        ${!this.hideAge &&
-        objProfile.profile?.age &&
-        /\d/.test(objProfile.profile.age)
-          ? html`<span slot="trailing-supporting-text"
-              >${objProfile.profile.age}</span
+        ${!this.hideAge && age && /\d/.test(age)
+          ? html`<span
+              slot="trailing-supporting-text"
+              class="${birth ? 'birth-symbol' : ''}"
+              >${birth ? asteriskIcon : age}</span
             >`
           : ''}
       </md-list-item>
@@ -101,18 +149,13 @@ export class GrampsjsEvents extends GrampsjsEditableList {
   }
 
   _getPrimaryText(obj) {
-    if (this.useSummary) {
-      return obj.profile.summary
+    if (this.eventProfiles) {
+      const profile = this.eventProfiles[obj.handle]
+      return profile
+        ? eventParticipantTitle(profile, key => this._(key))
+        : this._(obj.profile.type)
     }
-    return html`
-      ${obj.profile.type}
-      ${!obj.profile?.role ||
-      ['Primary', 'Family', this._('Primary'), this._('Family')].includes(
-        obj.profile?.role
-      )
-        ? ''
-        : `(${obj.profile?.role})`}
-    `
+    return getEventTitle(obj.profile, this.useSummary, key => this._(key))
   }
 
   _getSecondaryText(obj) {

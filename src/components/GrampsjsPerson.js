@@ -34,6 +34,47 @@ export class GrampsjsPerson extends GrampsjsObject {
             --md-sys-color-on-surface-variant
           );
         }
+
+        .sections {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(240px, 40%);
+          grid-template-areas: 'main side';
+          column-gap: clamp(28px, 4vw, 56px);
+          align-items: start;
+        }
+
+        .content-main,
+        .content-side {
+          display: flex;
+          flex-direction: column;
+          gap: 2rem;
+          min-width: 0;
+        }
+
+        .content-main {
+          grid-area: main;
+        }
+
+        .content-side {
+          grid-area: side;
+        }
+
+        .content-main:only-child {
+          grid-column: 1 / -1;
+        }
+
+        .content-main .section,
+        .content-side .section {
+          margin-right: 0;
+        }
+
+        @container (max-width: 800px) {
+          .sections {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+          }
+        }
       `,
     ]
   }
@@ -42,6 +83,7 @@ export class GrampsjsPerson extends GrampsjsObject {
     return {
       homePersonDetails: {type: Object},
       timelineData: {type: Array},
+      eventProfiles: {type: Object},
       _showFamilyEvents: {type: Boolean},
       _showRelatedEvents: {type: Boolean},
     }
@@ -55,6 +97,7 @@ export class GrampsjsPerson extends GrampsjsObject {
     this._objectIcon = objectIconPath.person
     this._showReferences = false
     this.timelineData = []
+    this.eventProfiles = null
     this._showFamilyEvents = false
     this._showRelatedEvents = false
   }
@@ -355,11 +398,6 @@ export class GrampsjsPerson extends GrampsjsObject {
         if (!this._showRelatedEvents) continue
       }
       const isRelated = !familyEventHandles.has(te.handle)
-      const personName = isRelated
-        ? [te.person?.name_given, te.person?.name_surname]
-            .filter(Boolean)
-            .join(' ')
-        : ''
       entries.push({
         sortKey: timelineOrder.get(te.handle),
         data: {
@@ -375,8 +413,6 @@ export class GrampsjsPerson extends GrampsjsObject {
           place: te.place?.name || '',
           place_name: te.place?.name || '',
           role: isRelated ? te.person?.relationship || '' : '',
-          summary: te.label || te.type || '',
-          context: isRelated ? personName : this._('Family'),
           age: te.age || '',
         },
       })
@@ -388,6 +424,30 @@ export class GrampsjsPerson extends GrampsjsObject {
       data: entries.map(e => e.data),
       profile: entries.map(e => e.profile),
     }
+  }
+
+  renderSections() {
+    const tabKeys = this._getTabs(this.edit)
+    if (!tabKeys.includes(this._currentTab)) {
+      ;[this._currentTab] = tabKeys
+    }
+    if (tabKeys.length === 0) {
+      return html``
+    }
+
+    const sideKeys = tabKeys.filter(key => key === 'relationships')
+    const mainKeys = tabKeys.filter(key => key !== 'relationships')
+
+    return html`
+      ${sideKeys.length
+        ? html`<div class="content-side">
+            ${sideKeys.map(key => this.renderSection(key, tabKeys.length))}
+          </div>`
+        : ''}
+      <div class="content-main">
+        ${mainKeys.map(key => this.renderSection(key, tabKeys.length))}
+      </div>
+    `
   }
 
   renderSectionContent(sectionKey) {
@@ -435,6 +495,7 @@ export class GrampsjsPerson extends GrampsjsObject {
       return html`
         ${chips}
         <grampsjs-events
+          useSummary
           hasShare
           hasAdd
           hasEdit
@@ -443,6 +504,7 @@ export class GrampsjsPerson extends GrampsjsObject {
           .data=${this.data?.extended?.events}
           .profile=${this.data?.profile?.events}
           .eventRef=${this.data?.event_ref_list}
+          .eventProfiles=${this.eventProfiles}
         ></grampsjs-events>
       `
     }
@@ -452,9 +514,11 @@ export class GrampsjsPerson extends GrampsjsObject {
     return html`
       ${chips}
       <grampsjs-events
+        useSummary
         .appState="${this.appState}"
         .data=${data}
         .profile=${profile}
+        .eventProfiles=${this.eventProfiles}
       ></grampsjs-events>
     `
   }

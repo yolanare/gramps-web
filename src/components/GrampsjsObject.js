@@ -562,30 +562,32 @@ export class GrampsjsObject extends GrampsjsAppStateMixin(LitElement) {
       return html``
     }
     return html`
-      ${tabKeys.map(
-        (key, idx, tabKeysArray) => html`<div class="row">
-          <div class="section" id="section-${key}">
-            <h3>
-              ${this._(_allTabs[key].title)}
-              ${this.tocSidebar || tabKeysArray.length <= 1 || this.preview
-                ? ''
-                : html`
-                    <md-icon-button
-                      class="toc-button"
-                      @click="${this._openTocDialog}"
-                    >
-                      <grampsjs-icon
-                        .path="${mdiTableOfContents}"
-                        color="var(--grampsjs-body-font-color-40)"
-                      ></grampsjs-icon>
-                    </md-icon-button>
-                  `}
-            </h3>
-            ${this.renderSectionContent(key)}
-          </div>
-        </div>`
-      )}
+      ${tabKeys.map(key => this.renderSection(key, tabKeys.length))}
     `
+  }
+
+  renderSection(key, sectionCount) {
+    return html`<div class="row">
+      <div class="section" id="section-${key}">
+        <h3>
+          ${this._(_allTabs[key].title)}
+          ${this.tocSidebar || sectionCount <= 1 || this.preview
+            ? ''
+            : html`
+                <md-icon-button
+                  class="toc-button"
+                  @click="${this._openTocDialog}"
+                >
+                  <grampsjs-icon
+                    .path="${mdiTableOfContents}"
+                    color="var(--grampsjs-body-font-color-40)"
+                  ></grampsjs-icon>
+                </md-icon-button>
+              `}
+        </h3>
+        ${this.renderSectionContent(key)}
+      </div>
+    </div>`
   }
 
   _openTocDialog() {

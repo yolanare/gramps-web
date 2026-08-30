@@ -11,6 +11,7 @@ import './GrampsjsIcon.js'
 import './GrampsjsTooltip.js'
 import {emptyDate, fireEvent, objectIconPath} from '../util.js'
 import './GrampsjsObjectLink.js'
+import {eventParticipantTitle} from './eventParticipantTitle.js'
 
 export class GrampsjsEvent extends GrampsjsObject {
   static get styles() {
@@ -144,50 +145,8 @@ export class GrampsjsEvent extends GrampsjsObject {
     fireEvent(this, 'nav', {path: 'timeline'})
   }
 
-  // eslint-disable-next-line class-methods-use-this
-  _renderPerson(obj) {
-    if (obj === undefined) {
-      return ''
-    }
-    return `${obj?.name_given || '…'} ${obj?.name_surname || '…'}`
-  }
-
-  // eslint-disable-next-line class-methods-use-this
-  _renderFamily(obj) {
-    if (obj === undefined) {
-      return ''
-    }
-    return `${this._renderPerson(obj.family?.father)} & ${this._renderPerson(
-      obj.family?.mother
-    )}`
-  }
-
-  _renderPrimaryPeople() {
-    const primary = this._('Primary')
-    const family = this._('Family')
-    const people =
-      this.data?.profile?.participants?.people.filter(
-        obj => obj.role === primary || obj.role === 'Primary'
-      ) || []
-    const families =
-      this.data?.profile?.participants?.families.filter(
-        obj => obj.role === family || obj.role === 'Family'
-      ) || []
-    return `${people
-      .map(obj => this._renderPerson(obj.person), this)
-      .join(', ')}
-            ${families.map(obj => this._renderFamily(obj), this).join(', ')}`
-  }
-
   _renderTitle() {
-    if (
-      !this.data?.profile?.participants?.people?.length &&
-      !this.data?.profile?.participants?.families?.length
-    ) {
-      // event without participants
-      return html`${this.data.profile.type}`
-    }
-    return html`${this.data.profile.type}: ${this._renderPrimaryPeople()}`
+    return html`${eventParticipantTitle(this.data.profile, key => this._(key))}`
   }
 
   _handleEditDetails() {
