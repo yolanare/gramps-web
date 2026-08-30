@@ -19,6 +19,10 @@ import './GrampsjsFormNewParentFamily.js'
 import './GrampsjsFormNewPartnerFamily.js'
 import './GrampsjsIcon.js'
 import {GrampsjsAppStateMixin} from '../mixins/GrampsjsAppStateMixin.js'
+import {
+  hasFamilyRelationshipSummary,
+  renderFamilyRelationshipSummary,
+} from './familyRelationshipSummary.js'
 
 export class GrampsjsRelationships extends GrampsjsAppStateMixin(LitElement) {
   static get styles() {
@@ -27,6 +31,26 @@ export class GrampsjsRelationships extends GrampsjsAppStateMixin(LitElement) {
       css`
         .familybtn {
           margin-left: 1.5em;
+        }
+
+        .family-group:not(:last-of-type) {
+          border-bottom: 1px dashed var(--md-sys-color-outline-variant);
+          margin-bottom: 3em;
+          padding-bottom: 1.5em;
+        }
+
+        .family-summary dd {
+          padding: 0px;
+        }
+
+        .family-summary .parent-dates {
+          display: block;
+          font-size: 0.85em;
+        }
+
+        .sym {
+          color: var(--grampsjs-body-font-color-35);
+          font-weight: bold;
         }
 
         h4 {
@@ -402,17 +426,29 @@ export class GrampsjsRelationships extends GrampsjsAppStateMixin(LitElement) {
       return html``
     }
     return html`
-      <h4>
-        ${parentTitle}
-        ${this._renderFamilyBtn(familyProfile.gramps_id)}${reorderButtons}
-      </h4>
-      <grampsjs-connected-parents
-        familyGrampsId="${familyProfile.gramps_id}"
-        .profile="${familyProfile}"
-        highlightId="${this.grampsId}"
-        .appState="${this.appState}"
-      ></grampsjs-connected-parents>
-      ${this._renderChildren(familyProfile, childrenTitle)}
+      <section class="family-group">
+        <h4>
+          ${parentTitle}
+          ${this._renderFamilyBtn(familyProfile.gramps_id)}${reorderButtons}
+        </h4>
+        ${hasFamilyRelationshipSummary(familyProfile)
+          ? html`<div class="family-summary">
+              <dt>${this._('Relationship type:').replace(':', '')}</dt>
+              <dd>
+                ${renderFamilyRelationshipSummary(familyProfile, key =>
+                  this._(key)
+                )}
+              </dd>
+            </div>`
+          : ''}
+        <grampsjs-connected-parents
+          familyGrampsId="${familyProfile.gramps_id}"
+          .profile="${familyProfile}"
+          highlightId="${this.grampsId}"
+          .appState="${this.appState}"
+        ></grampsjs-connected-parents>
+        ${this._renderChildren(familyProfile, childrenTitle)}
+      </section>
     `
   }
 

@@ -11,6 +11,10 @@ import './GrampsjsFormEditFamily.js'
 import './GrampsjsFormNewPerson.js'
 import './GrampsjsFormPersonRef.js'
 import {GrampsjsObject} from './GrampsjsObject.js'
+import {
+  hasFamilyRelationshipSummary,
+  renderFamilyRelationshipSummary,
+} from './familyRelationshipSummary.js'
 
 export class GrampsjsFamily extends GrampsjsObject {
   static get styles() {
@@ -92,12 +96,8 @@ export class GrampsjsFamily extends GrampsjsObject {
   }
 
   _renderMarriageBlock() {
-    const relType = this.data?.profile?.relationship
-    const marriage = this.data?.profile?.marriage
-    const divorce = this.data?.profile?.divorce
-    const hasMarriage = marriage?.date || marriage?.place
-    const hasDivorce = divorce && Object.keys(divorce).length > 0
-    if (!relType && !hasMarriage && !hasDivorce && !this.edit) {
+    const profile = this.data?.profile || {}
+    if (!hasFamilyRelationshipSummary(profile) && !this.edit) {
       return ''
     }
     return html`
@@ -106,25 +106,7 @@ export class GrampsjsFamily extends GrampsjsObject {
           <dt>${this._('Relationship type:').replace(':', '')}</dt>
           <dd class="${this.edit ? 'parent-row' : ''}">
             <div class="parent-info">
-              ${relType || ''}
-              ${hasMarriage
-                ? html`<span class="parent-dates">
-                    <span class="sym">⚭</span>
-                    ${marriage.date || ''}
-                    ${marriage.place
-                      ? `${this._('in')} ${
-                          marriage.place_name || marriage.place
-                        }`
-                      : ''}
-                  </span>`
-                : ''}
-              ${hasDivorce
-                ? html`<span class="parent-dates">
-                    <span class="sym">⚮</span>
-                    ${divorce.date || ''}
-                    ${divorce.place ? `${this._('in')} ${divorce.place}` : ''}
-                  </span>`
-                : ''}
+              ${renderFamilyRelationshipSummary(profile, key => this._(key))}
             </div>
             ${this.edit
               ? html`
