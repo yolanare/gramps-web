@@ -4,6 +4,7 @@ import {linkVertical} from 'd3-shape'
 import {Graphviz} from '@hpcc-js/wasm'
 import {chartNameDisplayFormat} from '../util.js'
 import {appendAddPersonButton} from './addPersonButton.js'
+import {getPersonEventCardText} from './util.js'
 
 const sexColor = {
   F: 'var(--color-girl)',
@@ -368,6 +369,7 @@ function remasterChart(
         xCoord: x - boxWidth / 2 + 4,
         yCoord: y - boxHeight / 2,
         profile: d.profile,
+        data: d.data,
         imageUrl: imageCount > maxImages ? '' : imageUrl,
         handle: found.groups.handle,
       })
@@ -465,7 +467,11 @@ function remasterChart(
     )
 
   nodes
-    .filter(d => d.profile?.birth?.date && d.nodetype === 'person')
+    .filter(
+      d =>
+        d.nodetype === 'person' &&
+        getPersonEventCardText(d.data, 'birth') !== null
+    )
     .append('text')
     .attr('text-anchor', 'start')
     .attr('font-weight', '350')
@@ -473,10 +479,19 @@ function remasterChart(
     .attr('paint-order', 'stroke')
     .attr('x', d => textPadding(d))
     .attr('y', 25 + 17 * 2)
-    .text(d => clipString(`*${d.profile.birth.date}`, boxWidthTotal(d)))
+    .text(d =>
+      clipString(
+        `*${getPersonEventCardText(d.data, 'birth')}`,
+        boxWidthTotal(d)
+      )
+    )
 
   nodes
-    .filter(d => d.profile?.death?.date && d.nodetype === 'person')
+    .filter(
+      d =>
+        d.nodetype === 'person' &&
+        getPersonEventCardText(d.data, 'death') !== null
+    )
     .append('text')
     .attr('text-anchor', 'start')
     .attr('font-weight', '350')
@@ -484,7 +499,12 @@ function remasterChart(
     .attr('paint-order', 'stroke')
     .attr('x', d => textPadding(d))
     .attr('y', 25 + 17 * 3)
-    .text(d => clipString(`†${d.profile.death.date}`, boxWidthTotal(d)))
+    .text(d =>
+      clipString(
+        `†${getPersonEventCardText(d.data, 'death')}`,
+        boxWidthTotal(d)
+      )
+    )
 
   // images
   nodes

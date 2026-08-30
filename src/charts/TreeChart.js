@@ -5,6 +5,7 @@ import {curveBumpX, link, symbolTriangle, symbol} from 'd3-shape'
 import {zoom} from 'd3-zoom'
 import {chartNameDisplayFormat, fireEvent} from '../util.js'
 import {appendAddPersonButton} from './addPersonButton.js'
+import {getPersonEventCardText} from './util.js'
 
 const genderColor = {
   0: 'var(--color-girl)',
@@ -277,18 +278,23 @@ function TreeChartCore(
 
   node
     .append('text')
-    .filter(d => d.data.person?.profile?.birth?.date)
+    .filter(d => getPersonEventCardText(d.data.person, 'birth') !== null)
     .attr('y', -boxHeight / 2 + 25 + 17 * 2)
     .attr('x', d => -boxWidth / 2 + textPadding(d))
     .attr('text-anchor', 'start')
     .attr('font-weight', '350')
     .attr('fill', 'var(--grampsjs-body-font-color-90)')
     .attr('paint-order', 'stroke')
-    .text(d => clipString(`*${d.data.person.profile.birth.date}`, textWidth(d)))
+    .text(d =>
+      clipString(
+        `*${getPersonEventCardText(d.data.person, 'birth')}`,
+        textWidth(d)
+      )
+    )
 
   node
     .append('text')
-    .filter(d => d.data.person?.profile?.death?.date)
+    .filter(d => getPersonEventCardText(d.data.person, 'death') !== null)
     .attr('y', -boxHeight / 2 + 25 + 17 * 3)
     .attr('x', d => -boxWidth / 2 + textPadding(d))
     .attr('text-anchor', 'start')
@@ -296,7 +302,12 @@ function TreeChartCore(
     .attr('fill', 'var(--grampsjs-body-font-color-90)')
 
     .attr('paint-order', 'stroke')
-    .text(d => clipString(`†${d.data.person.profile.death.date}`, textWidth(d)))
+    .text(d =>
+      clipString(
+        `†${getPersonEventCardText(d.data.person, 'death')}`,
+        textWidth(d)
+      )
+    )
 
   if (canEdit) {
     appendAddPersonButton(

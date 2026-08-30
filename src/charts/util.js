@@ -25,6 +25,17 @@ export const getImageUrl = (person, size, square = true) => {
   return getThumbnailUrlCropped(mediaRef.ref, rect, size, square)
 }
 
+// Returns null when the person has no such event, and a possibly empty string
+// when the event exists. This distinction lets charts keep the event line even
+// when both its date and description are empty.
+export const getPersonEventCardText = (person, eventName) => {
+  const profile = person?.profile?.[eventName]
+  if (!profile || Object.keys(profile).length === 0) return null
+  if (profile.date) return profile.date
+  const eventIndex = person?.[`${eventName}_ref_index`]
+  return person?.extended?.events?.[eventIndex]?.description || ''
+}
+
 export const getTree = (
   data,
   handle,
