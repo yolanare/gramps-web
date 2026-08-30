@@ -1,3 +1,5 @@
+/* eslint-disable lit-a11y/tabindex-no-positive -- dynamic values are only 0 or -1 */
+
 import {css, html, LitElement} from 'lit'
 import '@material/web/checkbox/checkbox.js'
 import '@material/web/iconbutton/icon-button.js'

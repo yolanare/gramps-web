@@ -1,3 +1,5 @@
+/* eslint-disable lit-a11y/tabindex-no-positive -- dynamic values are only 0 or -1 */
+
 import {LitElement, css, html} from 'lit'
 import {ifDefined} from 'lit/directives/if-defined.js'
 
