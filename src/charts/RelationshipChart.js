@@ -34,147 +34,230 @@ function createGraph(graph) {
     }
   }
 
-  // step 3: add nodes for remaining persons not part of any families
-  for (const p of data) {
-    const nnodes = graph.getNodesOfPerson(p.handle).length
-    if (nnodes < 1) {
-      graph.addNode(undefined, `p_${p.handle}`, p.handle, false)
-    }
-  }
-
-  // step 4: create edges
+  // step 3: create parent-child edges
   for (const p of data) {
     const f = p.extended.primary_parent_family
-    const me = p.handle
     const father = f.father_handle
     const mother = f.mother_handle
     if (graph.known(father) && graph.known(mother)) {
-      graph.addEdge(f.handle, false, me)
+      graph.addEdge(f.handle, false, p.handle)
     } else if (graph.known(father)) {
-      graph.addEdge(f.handle, father, me)
+      graph.addEdge(f.handle, father, p.handle)
     } else if (graph.known(mother)) {
-      graph.addEdge(f.handle, mother, me)
-    }
-  }
-
-  // step 5: connect unconnected couples (no parents and more than one family)
-  for (const p of data) {
-    const fp = p.extended?.primary_parent_family
-    // no parents?
-    if (
-      (!fp?.father_handle || !graph.known(fp?.father_handle)) &&
-      (!fp?.mother_handle || !graph.known(fp?.mother_handle))
-    ) {
-      let np = 0
-      for (const f of p.extended.families) {
-        let ck = 0
-        for (const c of f.child_ref_list) {
-          if (graph.known(c.ref)) {
-            ck += 1
-          }
-        }
-        if (
-          (graph.known(f?.father_handle) && graph.known(f?.mother_handle)) ||
-          ck > 0
-        ) {
-          np += 1
-        }
-      }
-      // occurs more than one time and needs to be connected by fake parent
-      if (np > 1) {
-        const fakeHandle = `fakeparent${p.handle}`
-        graph.addPerson({
-          handle: fakeHandle,
-          gramps_id: '',
-          profile: {
-            fake: true,
-            name_given: 'FAKE',
-            name_surname: p.profile.name_surname,
-          },
-        })
-        graph.addNode({fake: true}, `p_${fakeHandle}`, fakeHandle, false)
-        graph.addEdge(`p_${fakeHandle}`, fakeHandle, p.handle)
-      }
+      graph.addEdge(f.handle, mother, p.handle)
     }
   }
 }
 
+function getPartnerFamilyGroups(nodes) {
+  const families = nodes.filter(node => node.father && node.mother)
+  const familiesByPerson = new Map()
+  for (const family of families) {
+    for (const person of [family.father, family.mother]) {
+      const personFamilies = familiesByPerson.get(person) ?? []
+      personFamilies.push(family)
+      familiesByPerson.set(person, personFamilies)
+    }
+  }
+
+  const groups = []
+  const visitedFamilies = new Set()
+  for (const firstFamily of families) {
+    if (visitedFamilies.has(firstFamily.handle)) continue
+    const group = {families: [], persons: new Set()}
+    const queue = [firstFamily]
+    while (queue.length > 0) {
+      const family = queue.shift()
+      if (visitedFamilies.has(family.handle)) continue
+      visitedFamilies.add(family.handle)
+      group.families.push(family)
+      for (const person of [family.father, family.mother]) {
+        group.persons.add(person)
+        for (const relatedFamily of familiesByPerson.get(person) ?? []) {
+          if (!visitedFamilies.has(relatedFamily.handle)) {
+            queue.push(relatedFamily)
+          }
+        }
+      }
+    }
+    groups.push(group)
+  }
+  return groups
+}
+
+function orderFamilyGroup(group) {
+  const familiesByPerson = new Map()
+  for (const family of group.families) {
+    for (const person of [family.father, family.mother]) {
+      const personFamilies = familiesByPerson.get(person) ?? []
+      personFamilies.push(family)
+      familiesByPerson.set(person, personFamilies)
+    }
+  }
+
+  const root = [...group.persons].reduce((current, person) =>
+    (familiesByPerson.get(person)?.length ?? 0) >
+    (familiesByPerson.get(current)?.length ?? 0)
+      ? person
+      : current
+  )
+  const visitedFamilies = new Set()
+  const visitedPersons = new Set([root])
+
+  const branchesFrom = person => {
+    const branches = []
+    for (const family of familiesByPerson.get(person) ?? []) {
+      if (visitedFamilies.has(family.handle)) continue
+      visitedFamilies.add(family.handle)
+      const branch = [{type: 'family', handle: family.handle}]
+      const partner = family.father === person ? family.mother : family.father
+      if (!visitedPersons.has(partner)) {
+        visitedPersons.add(partner)
+        branch.push({type: 'person', handle: partner})
+        for (const nestedBranch of branchesFrom(partner)) {
+          branch.push(...nestedBranch)
+        }
+      }
+      branches.push(branch)
+    }
+    return branches
+  }
+
+  const branches = branchesFrom(root)
+  const ordered = []
+  const leftBranchCount = Math.ceil(branches.length / 2)
+  for (const branch of branches.slice(0, leftBranchCount)) {
+    ordered.push(...branch.toReversed())
+  }
+  ordered.push({type: 'person', handle: root})
+  for (const branch of branches.slice(leftBranchCount)) ordered.push(...branch)
+
+  const orderedPeople = ordered.filter(item => item.type === 'person')
+  const personPositions = new Map(
+    orderedPeople.map((item, index) => [item.handle, index])
+  )
+  const familiesAfterPerson = new Map()
+  for (const family of group.families) {
+    const earlierPerson =
+      personPositions.get(family.father) < personPositions.get(family.mother)
+        ? family.father
+        : family.mother
+    const families = familiesAfterPerson.get(earlierPerson) ?? []
+    families.push({type: 'family', handle: family.handle})
+    familiesAfterPerson.set(earlierPerson, families)
+  }
+
+  return orderedPeople.flatMap(person => [
+    person,
+    ...(familiesAfterPerson.get(person.handle) ?? []),
+  ])
+}
+
+const personNodeId = handle => `person_${handle}`
+const familyNodeId = handle => `family_${handle}`
+
 function generateDot(graph) {
   let dot = ''
-  // nodes
-  for (const n of graph.getNodes()) {
-    const pf = n.father
-    const pm = n.mother
-    const widthInches = n.fake ? 0 : graph.boxWidth / 66
-    const heightInches = n.fake ? 0 : graph.boxHeight / 66 - 0.3
-    if (pf && pm) {
-      dot += `
-      subgraph "cluster_${n.handle}" {
+
+  const groupedPeople = new Set()
+  const familyGroups = getPartnerFamilyGroups(graph.getNodes())
+  for (const [groupIndex, group] of familyGroups.entries()) {
+    for (const person of group.persons) groupedPeople.add(person)
+    const ordered = orderFamilyGroup(group)
+    dot += `
+      subgraph "cluster_family_group_${groupIndex}" {
         cluster=true
         color=white
         margin="50,0"
         label="."
-        "node_${n.handle}x${pf}" [
-          class="person_${pf}"
-          margin=0
+        subgraph "family_group_rank_${groupIndex}" {
+          rank=same
+    `
+    for (const item of ordered) {
+      if (item.type === 'person') {
+        dot += `
+        "${personNodeId(item.handle)}" [
+          class="person_${item.handle}"
+          margin=0.25
           shape="none"
           fixedsize=true
-          width=${widthInches}
-          height=${heightInches}
+          width=${graph.boxWidth / 66}
+          height=${graph.boxHeight / 66 - 0.3}
           label=<->
         ]
-        "node_${n.handle}" [
-          class="family_${n.handle}"
+        `
+      } else {
+        dot += `
+        "${familyNodeId(item.handle)}" [
+          class="family_${item.handle}"
           label=<.>
           shape="none"
           margin=0
           fixedsize=true
           width=0.1
-          height=${heightInches}
+          height=${graph.boxHeight / 66 - 0.3}
         ]
-        "node_${n.handle}x${pm}" [
-          class="person_${pm}"
-          margin=0.25
-          shape="none"
-          fixedsize=true
-          width=${widthInches}
-          height=${heightInches}
-          label=<->
-        ]
+        `
       }
-    `
-    } else {
-      const p = pf || pm
+    }
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1]
+      const current = ordered[index]
+      const previousId =
+        previous.type === 'person'
+          ? personNodeId(previous.handle)
+          : familyNodeId(previous.handle)
+      const currentId =
+        current.type === 'person'
+          ? personNodeId(current.handle)
+          : familyNodeId(current.handle)
+      dot += `"${previousId}" -> "${currentId}" [style=invis, constraint=false, weight=1000]
+      `
+    }
+    dot += '}}'
+
+    for (const family of group.families) {
+      const familyId = familyNodeId(family.handle)
       dot += `
-      subgraph "cluster_${n.handle}" {
+      "${personNodeId(
+        family.father
+      )}" -> "${familyId}" [tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
+      "${familyId}" -> "${personNodeId(
+        family.mother
+      )}" [tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
+      `
+    }
+  }
+
+  for (const person of graph.getPersons()) {
+    if (groupedPeople.has(person.handle)) continue
+    dot += `
+      subgraph "cluster_person_${person.handle}" {
         cluster=true
         color=white
         label="."
-        "node_${n.handle}x${p}" [
-          class="person_${p}"
+        "${personNodeId(person.handle)}" [
+          class="person_${person.handle}"
           margin=0.25
           shape="none"
           fixedsize=true
-          width=${widthInches}
-          height=${heightInches}
+          width=${graph.boxWidth / 66}
+          height=${graph.boxHeight / 66 - 0.3}
           label=<->
         ]
       }
     `
-    }
   }
-  // edges
+
+  // Parent-child edges preserve the original family or single-parent source.
   for (const e of graph.getEdges()) {
-    for (const targetnode of graph.getNodesOfPerson(e.targetPerson)) {
-      if (e.sourcePerson) {
-        // one-person node as source
-        dot += `"node_${e.sourceFamily}x${e.sourcePerson}" -> "node_${targetnode}x${e.targetPerson}" [label="", arrowhead=none, color="#555"]
+    const source = e.sourcePerson
+      ? personNodeId(e.sourcePerson)
+      : familyNodeId(e.sourceFamily)
+    dot += `"${source}" -> "${personNodeId(
+      e.targetPerson
+    )}" [label="", arrowhead=none, color="#555"]
       `
-      } else {
-        dot += `"node_${e.sourceFamily}" -> "node_${targetnode}x${e.targetPerson}" [ltail="node_${e.sourceFamily}", label="", arrowhead=none, color="#555"]
-      `
-      }
-    }
   }
 
   // frame dot code with global commands
@@ -206,8 +289,6 @@ class Relgraph {
     this.rootPerson = undefined
     this.nodes = {}
     this.edges = {}
-    this.edge_seen = {}
-    this.person_node_map = {}
     this.persons = {}
     this.dot = undefined
     this.shrinkToFit = false
@@ -257,17 +338,11 @@ class Relgraph {
     }
     if (father && this.known(father)) {
       n.father = father
-      // remember in which nodes these person can be found
-      this.person_node_map[father] = this.person_node_map[father] ?? {}
-      this.person_node_map[father][family] = true
       // map persondata into node
       n.fatherdata = this.known(father)
     }
     if (mother && this.known(mother)) {
       n.mother = mother
-      // remember in which nodes these person can be found
-      this.person_node_map[mother] = this.person_node_map[mother] ?? {}
-      this.person_node_map[mother][family] = true
       // map persondata into node
       n.motherdata = this.known(mother)
     }
@@ -284,14 +359,6 @@ class Relgraph {
     return Object.values(this.nodes)
   }
 
-  getNodesOfPerson(me) {
-    if (this.person_node_map[me]) {
-      const x = Object.keys(this.person_node_map[me])
-      return x
-    }
-    return []
-  }
-
   addEdge(sourcefamily, sourceperson, targetperson) {
     const key = `${sourcefamily}__${sourceperson}__${targetperson}`
     this.edges[key] = {
@@ -304,6 +371,14 @@ class Relgraph {
   getEdges() {
     return Object.values(this.edges)
   }
+}
+
+export function createRelationshipGraphDot(
+  data,
+  boxWidth = 190,
+  boxHeight = 90
+) {
+  return new Relgraph(data, boxWidth, boxHeight).getDot()
 }
 
 const clipString = (s, length) => {
@@ -600,11 +675,11 @@ function remasterChart(
     const points = pathData
       ?.match(/-?[\d.]+,-?[\d.]+/g) // Find all "x,y" pairs
       ?.map(d => d.split(',').map(Number)) // Convert to [x, y] arrays
-    // we use only the start and end point
-    const firstAndLastPoint = [points[0], points[points.length - 1]]
-    if (!points) {
+    if (!points || points.length < 2) {
       return
     }
+    // we use only the start and end point
+    const firstAndLastPoint = [points[0], points[points.length - 1]]
     // we replace the polyline with a smooth connector from start to end
     edges
       .append('path')
