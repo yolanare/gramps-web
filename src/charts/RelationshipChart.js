@@ -2,16 +2,17 @@ import {create, select} from 'd3-selection'
 import {zoom} from 'd3-zoom'
 import {linkVertical} from 'd3-shape'
 import {Graphviz} from '@hpcc-js/wasm'
-import {chartNameDisplayFormat} from '../util.js'
+import {chartNameDisplayFormat, fireEvent} from '../util.js'
 import {appendAddPersonButton} from './addPersonButton.js'
 import {getPersonEventCardText} from './util.js'
-
-const sexColor = {
-  F: 'var(--color-girl)',
-  M: 'var(--color-boy)',
-  X: 'var(--color-other)',
-  U: 'var(--color-unknown)',
-}
+import {
+  genderColor,
+  getFamilyUnionStatus,
+  getUnionMarkerPaths,
+  getUnionVisualCode,
+  unionLineStrokeWidth,
+  unionStatus,
+} from './relationshipVisualCodes.js'
 
 function createGraph(graph) {
   const data = graph.getData()
@@ -85,76 +86,152 @@ function getPartnerFamilyGroups(nodes) {
   return groups
 }
 
-function orderFamilyGroup(group) {
-  const familiesByPerson = new Map()
-  for (const family of group.families) {
-    for (const person of [family.father, family.mother]) {
-      const personFamilies = familiesByPerson.get(person) ?? []
-      personFamilies.push(family)
-      familiesByPerson.set(person, personFamilies)
-    }
-  }
+function sortableDate(value) {
+  const parts = (value ?? '').match(/(-?\d{3,4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?/)
+  if (!parts) return null
+  return (
+    Number(parts[1]) * 10000 +
+    Number(parts[2] ?? 0) * 100 +
+    Number(parts[3] ?? 0)
+  )
+}
 
-  const root = [...group.persons].reduce((current, person) =>
-    (familiesByPerson.get(person)?.length ?? 0) >
-    (familiesByPerson.get(current)?.length ?? 0)
-      ? person
-      : current
+function familyDate(profile) {
+  const dates = [
+    profile.marriage?.date,
+    profile.divorce?.date,
+    ...(profile.events ?? []).map(event => event.date),
+  ]
+    .map(sortableDate)
+    .filter(date => date !== null)
+  return dates.length ? Math.min(...dates) : null
+}
+
+function compareDates(first, second) {
+  if (first === null) return second === null ? 0 : 1
+  if (second === null) return -1
+  return first - second
+}
+
+function orderFamilyGroup(group, graph) {
+  const familyCounts = new Map([...group.persons].map(person => [person, 0]))
+  for (const family of group.families)
+    for (const person of [family.father, family.mother])
+      familyCounts.set(person, familyCounts.get(person) + 1)
+
+  const reference = [...group.persons].reduce((current, person) =>
+    familyCounts.get(person) > familyCounts.get(current) ? person : current
   )
   const visitedFamilies = new Set()
-  const visitedPersons = new Set([root])
+  const visitedPeople = new Set([reference])
+  const orderedPeople = [reference]
+  const orderedFamilies = []
 
-  const branchesFrom = person => {
-    const branches = []
-    for (const family of familiesByPerson.get(person) ?? []) {
-      if (visitedFamilies.has(family.handle)) continue
-      visitedFamilies.add(family.handle)
-      const branch = [{type: 'family', handle: family.handle}]
-      const partner = family.father === person ? family.mother : family.father
-      if (!visitedPersons.has(partner)) {
-        visitedPersons.add(partner)
-        branch.push({type: 'person', handle: partner})
-        for (const nestedBranch of branchesFrom(partner)) {
-          branch.push(...nestedBranch)
+  while (visitedFamilies.size < group.families.length) {
+    const candidates = group.families
+      .filter(
+        family =>
+          !visitedFamilies.has(family.handle) &&
+          (visitedPeople.has(family.father) || visitedPeople.has(family.mother))
+      )
+      .map(family => {
+        const connectingIndex = orderedPeople.findIndex(
+          person => person === family.father || person === family.mother
+        )
+        return {
+          family,
+          connectingIndex,
+          connectingPerson: orderedPeople[connectingIndex],
         }
-      }
-      branches.push(branch)
+      })
+      .toSorted(
+        (first, second) =>
+          compareDates(first.family.date, second.family.date) ||
+          first.connectingIndex - second.connectingIndex ||
+          graph.getFamilyOrder(first.connectingPerson, first.family.handle) -
+            graph.getFamilyOrder(second.connectingPerson, second.family.handle)
+      )
+    if (!candidates.length) throw new Error('Disconnected family group')
+
+    const {family} = candidates[0]
+    visitedFamilies.add(family.handle)
+    orderedFamilies.push(family)
+    for (const person of [family.father, family.mother]) {
+      if (visitedPeople.has(person)) continue
+      visitedPeople.add(person)
+      orderedPeople.push(person)
     }
-    return branches
   }
 
-  const branches = branchesFrom(root)
-  const ordered = []
-  const leftBranchCount = Math.ceil(branches.length / 2)
-  for (const branch of branches.slice(0, leftBranchCount)) {
-    ordered.push(...branch.toReversed())
-  }
-  ordered.push({type: 'person', handle: root})
-  for (const branch of branches.slice(leftBranchCount)) ordered.push(...branch)
-
-  const orderedPeople = ordered.filter(item => item.type === 'person')
   const personPositions = new Map(
-    orderedPeople.map((item, index) => [item.handle, index])
+    orderedPeople.map((person, index) => [person, index])
   )
-  const familiesAfterPerson = new Map()
-  for (const family of group.families) {
-    const earlierPerson =
-      personPositions.get(family.father) < personPositions.get(family.mother)
+  const familiesBeforePerson = new Map()
+  for (const family of orderedFamilies) {
+    const laterPerson =
+      personPositions.get(family.father) > personPositions.get(family.mother)
         ? family.father
         : family.mother
-    const families = familiesAfterPerson.get(earlierPerson) ?? []
+    const families = familiesBeforePerson.get(laterPerson) ?? []
     families.push({type: 'family', handle: family.handle})
-    familiesAfterPerson.set(earlierPerson, families)
+    familiesBeforePerson.set(laterPerson, families)
   }
 
-  return orderedPeople.flatMap(person => [
-    person,
-    ...(familiesAfterPerson.get(person.handle) ?? []),
-  ])
+  return {
+    items: orderedPeople.flatMap(person => [
+      ...(familiesBeforePerson.get(person) ?? []),
+      {type: 'person', handle: person},
+    ]),
+    families: orderedFamilies,
+  }
+}
+
+function markWidowedFamilies(graph, group) {
+  for (const person of group.persons) {
+    const personDeath = sortableDate(graph.known(person).profile?.death?.date)
+    const families = group.families
+      .filter(family => family.father === person || family.mother === person)
+      .toSorted(
+        (first, second) =>
+          compareDates(first.date, second.date) ||
+          graph.getFamilyOrder(person, first.handle) -
+            graph.getFamilyOrder(person, second.handle)
+      )
+    for (let index = 0; index < families.length - 1; index += 1) {
+      const family = families[index]
+      if (family.status === unionStatus.divorced) continue
+      const partner = family.father === person ? family.mother : family.father
+      const partnerDeath = sortableDate(
+        graph.known(partner).profile?.death?.date
+      )
+      const nextFamilyDate = families[index + 1].date
+      if (partnerDeath === null) continue
+      if (personDeath !== null && personDeath <= partnerDeath) continue
+      if (nextFamilyDate !== null && partnerDeath >= nextFamilyDate) continue
+      family.deceasedPartner = partner
+    }
+  }
 }
 
 const personNodeId = handle => `person_${handle}`
 const familyNodeId = handle => `family_${handle}`
+const familyNodeWidth = 0.8
+const unionLineOffset = 12
+const unionLineVerticalInset = 15
+const genderStripLeftOverflow = 4
+const graphNodeHeight = graph => graph.boxHeight / 66 - 0.3
+const personNodeDot = (graph, handle) => `
+  "${personNodeId(handle)}" [
+    class="person_${handle}"
+    margin=0.25
+    shape="none"
+    fixedsize=true
+    width=${graph.boxWidth / 66}
+    height=${graphNodeHeight(graph)}
+    label=<->
+  ]
+`
+const itemNodeId = item => `${item.type}_${item.handle}`
 
 function generateDot(graph) {
   let dot = ''
@@ -163,7 +240,19 @@ function generateDot(graph) {
   const familyGroups = getPartnerFamilyGroups(graph.getNodes())
   for (const [groupIndex, group] of familyGroups.entries()) {
     for (const person of group.persons) groupedPeople.add(person)
-    const ordered = orderFamilyGroup(group)
+    markWidowedFamilies(graph, group)
+    const {items: ordered, families: orderedFamilies} = orderFamilyGroup(
+      group,
+      graph
+    )
+    const offsetStep = Math.min(
+      unionLineOffset,
+      Math.max(0, graph.boxHeight - 2 * unionLineVerticalInset) /
+        Math.max(1, orderedFamilies.length - 1)
+    )
+    for (const [index, family] of orderedFamilies.entries())
+      graph.getNode(family.handle).unionOffset =
+        (index - (orderedFamilies.length - 1)) * offsetStep
     dot += `
       subgraph "cluster_family_group_${groupIndex}" {
         cluster=true
@@ -175,17 +264,7 @@ function generateDot(graph) {
     `
     for (const item of ordered) {
       if (item.type === 'person') {
-        dot += `
-        "${personNodeId(item.handle)}" [
-          class="person_${item.handle}"
-          margin=0.25
-          shape="none"
-          fixedsize=true
-          width=${graph.boxWidth / 66}
-          height=${graph.boxHeight / 66 - 0.3}
-          label=<->
-        ]
-        `
+        dot += personNodeDot(graph, item.handle)
       } else {
         dot += `
         "${familyNodeId(item.handle)}" [
@@ -194,37 +273,29 @@ function generateDot(graph) {
           shape="none"
           margin=0
           fixedsize=true
-          width=0.1
-          height=${graph.boxHeight / 66 - 0.3}
+          width=${familyNodeWidth}
+          height=${graphNodeHeight(graph)}
         ]
         `
       }
     }
-    for (let index = 1; index < ordered.length; index += 1) {
-      const previous = ordered[index - 1]
-      const current = ordered[index]
-      const previousId =
-        previous.type === 'person'
-          ? personNodeId(previous.handle)
-          : familyNodeId(previous.handle)
-      const currentId =
-        current.type === 'person'
-          ? personNodeId(current.handle)
-          : familyNodeId(current.handle)
-      dot += `"${previousId}" -> "${currentId}" [style=invis, constraint=false, weight=1000]
-      `
-    }
+    if (orderedFamilies.length > 1)
+      for (let index = 1; index < ordered.length; index += 1)
+        dot += `"${itemNodeId(ordered[index - 1])}" -> "${itemNodeId(
+          ordered[index]
+        )}" [style=invis, weight=1000]
+        `
     dot += '}}'
 
     for (const family of group.families) {
       const familyId = familyNodeId(family.handle)
+      const fatherId = personNodeId(family.father)
+      const motherId = personNodeId(family.mother)
+      const fatherEdgeClass = `union_edge union_person_${family.father} union_family_${family.handle}`
+      const motherEdgeClass = `union_edge union_person_${family.mother} union_family_${family.handle}`
       dot += `
-      "${personNodeId(
-        family.father
-      )}" -> "${familyId}" [tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
-      "${familyId}" -> "${personNodeId(
-        family.mother
-      )}" [tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
+      "${fatherId}" -> "${familyId}" [class="${fatherEdgeClass}", tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
+      "${familyId}" -> "${motherId}" [class="${motherEdgeClass}", tailport=s, headport=s, constraint=false, label="", arrowhead=none, color="#555"]
       `
     }
   }
@@ -236,15 +307,7 @@ function generateDot(graph) {
         cluster=true
         color=white
         label="."
-        "${personNodeId(person.handle)}" [
-          class="person_${person.handle}"
-          margin=0.25
-          shape="none"
-          fixedsize=true
-          width=${graph.boxWidth / 66}
-          height=${graph.boxHeight / 66 - 0.3}
-          label=<->
-        ]
+        ${personNodeDot(graph, person.handle)}
       }
     `
   }
@@ -254,9 +317,11 @@ function generateDot(graph) {
     const source = e.sourcePerson
       ? personNodeId(e.sourcePerson)
       : familyNodeId(e.sourceFamily)
-    dot += `"${source}" -> "${personNodeId(
-      e.targetPerson
-    )}" [label="", arrowhead=none, color="#555"]
+    const target = personNodeId(e.targetPerson)
+    const descentClass = e.sourcePerson
+      ? 'descent_edge'
+      : `descent_edge descent_family_${e.sourceFamily}`
+    dot += `"${source}" -> "${target}" [class="${descentClass}", label="", arrowhead=none, color="#555"]
       `
   }
 
@@ -264,6 +329,7 @@ function generateDot(graph) {
   dot = `
     digraph gramps {
       compound=true
+      newrank=true
       ranksep=2.8
       labelloc="t"
       charset="UTF-8"
@@ -292,6 +358,13 @@ class Relgraph {
     this.persons = {}
     this.dot = undefined
     this.shrinkToFit = false
+    this.familyProfiles = new Map()
+    for (const person of data) {
+      for (const family of person.profile?.families ?? []) {
+        const handle = family.handle ?? family.family_handle
+        if (handle) this.familyProfiles.set(handle, family.profile ?? family)
+      }
+    }
     createGraph(this)
   }
 
@@ -330,11 +403,24 @@ class Relgraph {
     return this.persons[me] || false
   }
 
+  getFamilyOrder(person, family) {
+    const data = this.known(person).data
+    const handles =
+      data.family_list?.length > 0
+        ? data.family_list
+        : data.extended.families.map(item => item.handle)
+    const index = handles.indexOf(family)
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index
+  }
+
   addNode(fdata, family, father, mother) {
+    const profile = this.familyProfiles.get(family) ?? fdata.profile ?? fdata
     const n = {
       handle: family,
-      type: fdata?.type,
-      fake: fdata?.fake,
+      date: familyDate(profile),
+      status: getFamilyUnionStatus({...fdata, profile}),
+      grampsId: profile.gramps_id ?? fdata.gramps_id,
+      fake: fdata.fake,
     }
     if (father && this.known(father)) {
       n.father = father
@@ -405,6 +491,22 @@ function clicked(event, d) {
     })
   )
 }
+
+function showPreview(target, objectType, grampsId) {
+  if (!grampsId || window.matchMedia('(hover: none)').matches) return
+  const anchorRect = target.getBoundingClientRect()
+  window.dispatchEvent(
+    new CustomEvent('object:preview-show', {
+      detail: {objectType, grampsId, anchorRect},
+    })
+  )
+}
+
+function hidePreview() {
+  if (!window.matchMedia('(hover: none)').matches)
+    window.dispatchEvent(new CustomEvent('object:preview-hide'))
+}
+
 function remasterChart(
   divhidden,
   targetsvg,
@@ -415,7 +517,8 @@ function remasterChart(
   getImageUrl,
   maxImages,
   nameDisplayFormat,
-  canEdit = false
+  canEdit = false,
+  unionLabel
 ) {
   const gvchartx = divhidden.select('svg')
   const nodedata = []
@@ -441,7 +544,7 @@ function remasterChart(
       }
       nodedata.push({
         nodetype: d.profile.fake ? 'fake' : 'person',
-        xCoord: x - boxWidth / 2 + 4,
+        xCoord: x - boxWidth / 2 + genderStripLeftOverflow,
         yCoord: y - boxHeight / 2,
         profile: d.profile,
         data: d.data,
@@ -452,9 +555,12 @@ function remasterChart(
       const d = graph.getNode(found.groups.handle)
       nodedata.push({
         nodetype: 'family',
-        xCoord: x,
-        yCoord: y,
-        type: d.type,
+        xCoord: Number(x) + genderStripLeftOverflow / 2,
+        yCoord: Number(y),
+        status: d.status,
+        grampsId: d.grampsId,
+        unionOffset: d.unionOffset ?? 0,
+        deceasedPartner: d.deceasedPartner,
         handle: found.groups.handle,
       })
     }
@@ -474,10 +580,10 @@ function remasterChart(
   nodes
     .filter(d => d.nodetype === 'person')
     .append('rect')
-    .attr('fill', d => sexColor[d.profile?.sex] ?? 'var(--color-unknown)')
+    .attr('fill', d => genderColor[d.profile?.sex] ?? 'var(--color-unknown)')
     .attr('width', 24)
     .attr('height', boxHeight - 1)
-    .attr('x', -4)
+    .attr('x', -genderStripLeftOverflow)
     .attr('y', 0)
     .attr('rx', 12)
     .attr('ry', 12)
@@ -611,49 +717,78 @@ function remasterChart(
     .attr('width', 70)
     .attr('xlink:href', d => d.imageUrl)
 
-  nodes
-    .filter(d => d.type === 'Married' && d.nodetype === 'family')
-    .append('circle')
-    .attr('class', 'married')
-    .attr('r', 6)
-    .attr('cy', boxHeight / 2 - 10)
-    .attr('stroke', 'var(--grampsjs-body-font-color-40)')
-    .attr('fill', 'var(--grampsjs-color-shade-220)')
+  const markerY = boxHeight / 2 - 10
+  const familyMarkerY = d => markerY + d.unionOffset
+  const familyNodes = nodes.filter(d => d.nodetype === 'family')
+  const dataByType = type =>
+    new Map(nodedata.filter(d => d.nodetype === type).map(d => [d.handle, d]))
+  const familyData = dataByType('family')
+  const personData = dataByType('person')
+  const deceasedSide = d => {
+    if (!d.deceasedPartner) return undefined
+    return personData.get(d.deceasedPartner).xCoord < d.xCoord
+      ? 'left'
+      : 'right'
+  }
+  const familyIsInteractive = d => d.grampsId && !canEdit
 
-  nodes
-    .filter(d => d.type === 'Married' && d.nodetype === 'family')
-    .insert('line', ':first-child')
-    .attr('class', 'married')
-    .attr('x1', -11)
-    .attr('x2', 11)
-    .attr('y1', boxHeight / 2 - 10)
-    .attr('y2', boxHeight / 2 - 10)
-    .attr('stroke', 'var(--grampsjs-body-font-color-40)')
-    .attr('stroke-width', 1)
+  familyNodes
+    .attr('class', d => `node family union-${d.status}`)
+    .attr('role', d => (familyIsInteractive(d) ? 'link' : null))
+    .attr('tabindex', d => (familyIsInteractive(d) ? 0 : null))
+    .attr('aria-label', d => unionLabel(d.status))
+    .style('cursor', d => (familyIsInteractive(d) ? 'pointer' : 'default'))
+    .append('title')
+    .text(d => unionLabel(d.status))
+
+  familyNodes
+    .append('circle')
+    .attr('class', 'family-hit-target')
+    .attr('r', 16)
+    .attr('cy', familyMarkerY)
+    .attr('fill', 'transparent')
+    .attr('pointer-events', 'all')
+
+  familyNodes.each(function (d) {
+    const visual = getUnionVisualCode(d.status)
+    select(this)
+      .append('g')
+      .attr('transform', `translate(0 ${familyMarkerY(d)})`)
+      .selectAll('path')
+      .data(getUnionMarkerPaths(visual, deceasedSide(d)))
+      .join('path')
+      .attr('class', marker => marker.className)
+      .attr('d', marker => marker.d)
+      .attr('fill', marker => marker.fill)
+      .attr('stroke', marker => marker.stroke)
+      .attr('stroke-width', marker => marker.strokeWidth)
+      .attr('stroke-linecap', marker => marker.strokeLinecap)
+      .attr('stroke-linejoin', marker => marker.strokeLinejoin)
+  })
+
+  const openFamily = d =>
+    fireEvent(window, 'nav', {path: `family/${d.grampsId}`})
+  familyNodes
+    .filter(familyIsInteractive)
+    .on('click', (event, d) => openFamily(d))
+    .on('keydown', (event, d) => {
+      if (!['Enter', ' '].includes(event.key)) return
+      event.preventDefault()
+      openFamily(d)
+    })
+    .on('mouseenter', function (event, d) {
+      showPreview(this, 'family', d.grampsId)
+    })
+    .on('mouseleave', hidePreview)
 
   nodes
     .filter(d => d.nodetype === 'person')
     .style('cursor', canEdit ? 'default' : 'pointer')
     .on('click', canEdit ? null : clicked)
     .on('mouseenter', function (event, d) {
-      if (canEdit) return
-      if (window.matchMedia('(hover: none)').matches) return
-      const grampsId = d.profile?.gramps_id
-      if (!grampsId) return
-      window.dispatchEvent(
-        new CustomEvent('object:preview-show', {
-          detail: {
-            objectType: 'person',
-            grampsId,
-            anchorRect: this.getBoundingClientRect(),
-          },
-        })
-      )
+      if (!canEdit) showPreview(this, 'person', d.profile?.gramps_id)
     })
-    .on('mouseleave', () => {
-      if (window.matchMedia('(hover: none)').matches) return
-      window.dispatchEvent(new CustomEvent('object:preview-hide'))
-    })
+    .on('mouseleave', hidePreview)
 
   if (canEdit) {
     appendAddPersonButton(
@@ -667,33 +802,116 @@ function remasterChart(
   const linkGenerator = linkVertical()
     .x(d => d.x)
     .y(d => d.y)
+  let unionGradientIndex = 0
   // copy edges
   gvchartx.selectAll('.edge').each(function () {
-    const path = select(this).select('path')
-    const pathData = path.attr('d')
+    const edge = select(this)
+    const edgeClass = edge.attr('class') ?? ''
+    const pathData = edge.select('path').attr('d')
     // extract points from path data
     const points = pathData
       ?.match(/-?[\d.]+,-?[\d.]+/g) // Find all "x,y" pairs
       ?.map(d => d.split(',').map(Number)) // Convert to [x, y] arrays
-    if (!points || points.length < 2) {
-      return
-    }
+    if (!points || points.length < 2)
+      throw new Error(`Invalid Graphviz edge path: ${pathData}`)
     // we use only the start and end point
-    const firstAndLastPoint = [points[0], points[points.length - 1]]
+    const firstPoint = points[0]
+    const lastPoint = points.at(-1)
     // we replace the polyline with a smooth connector from start to end
+    const personHandle = edgeClass.match(/union_person_([^\s]+)/)?.[1]
+    const familyHandle = edgeClass.match(/union_family_([^\s]+)/)?.[1]
+    const descentFamilyHandle = edgeClass.match(/descent_family_([^\s]+)/)?.[1]
+    const isUnion = edgeClass.includes('union_edge')
+    const targetPoint = {
+      x: lastPoint[0],
+      y: lastPoint[1],
+    }
+    let edgePath = linkGenerator({
+      source: {x: firstPoint[0], y: firstPoint[1]},
+      target: targetPoint,
+    })
+    let stroke = 'var(--grampsjs-body-font-color-40)'
+    let strokeWidth = 1
+    let strokeDash = null
+
+    if (isUnion) {
+      const person = graph.known(personHandle)
+      const family = graph.getNode(familyHandle)
+      const familyDatum = familyData.get(familyHandle)
+      const personDatum = personData.get(personHandle)
+      const y = familyDatum.yCoord + familyMarkerY(familyDatum)
+      const direction = Math.sign(
+        familyDatum.xCoord - (personDatum.xCoord + boxWidth / 2)
+      )
+      const personX = personDatum.xCoord + (direction > 0 ? boxWidth : 0)
+      const familyX = familyDatum.xCoord
+      edgePath = `M ${familyX},${y} L ${personX},${y}`
+      stroke = genderColor[person.profile?.sex] ?? genderColor.U
+      strokeWidth = unionLineStrokeWidth
+      strokeDash = getUnionVisualCode(family.status).lineDash
+      const left = Math.min(personX, familyX)
+      const right = Math.max(personX, familyX)
+      const crossedPeople = [...personData.values()].filter(
+        other =>
+          other.handle !== family.father &&
+          other.handle !== family.mother &&
+          y >= other.yCoord &&
+          y <= other.yCoord + boxHeight &&
+          other.xCoord - genderStripLeftOverflow < right &&
+          other.xCoord + boxWidth > left
+      )
+      if (crossedPeople.length) {
+        const gradientId = `union-edge-gradient-${unionGradientIndex++}`
+        const gradient = defs
+          .append('linearGradient')
+          .attr('id', gradientId)
+          .attr('class', 'union-occlusion-gradient')
+          .attr('gradientUnits', 'userSpaceOnUse')
+          .attr('x1', left)
+          .attr('x2', right)
+        const stops = [
+          {x: left, opacity: 1},
+          ...crossedPeople.flatMap(other => {
+            const cardLeft = Math.max(
+              left,
+              other.xCoord - genderStripLeftOverflow
+            )
+            const cardRight = Math.min(right, other.xCoord + boxWidth)
+            return [
+              {x: Math.max(left, cardLeft - 44), opacity: 1},
+              {x: cardLeft, opacity: 0.2},
+              {x: cardRight, opacity: 0.2},
+              {x: Math.min(right, cardRight + 44), opacity: 1},
+            ]
+          }),
+          {x: right, opacity: 1},
+        ].toSorted((a, b) => a.x - b.x)
+        for (const stop of stops)
+          gradient
+            .append('stop')
+            .attr('offset', (stop.x - left) / (right - left))
+            .attr('stop-color', stroke)
+            .attr('stop-opacity', stop.opacity)
+        stroke = `url(#${gradientId})`
+      }
+    } else if (descentFamilyHandle) {
+      const familyDatum = familyData.get(descentFamilyHandle)
+      const y = familyDatum.yCoord + familyMarkerY(familyDatum)
+      edgePath = linkGenerator({
+        source: {x: familyDatum.xCoord, y},
+        target: targetPoint,
+      })
+    }
     edges
       .append('path')
-      .attr('class', 'edge')
-      .attr(
-        'd',
-        linkGenerator({
-          source: {x: firstAndLastPoint[0][0], y: firstAndLastPoint[0][1]},
-          target: {x: firstAndLastPoint[1][0], y: firstAndLastPoint[1][1]},
-        })
-      )
+      .attr('class', isUnion ? 'edge union-edge' : 'edge descent-edge')
+      .attr('data-family-handle', familyHandle ?? descentFamilyHandle)
+      .attr('data-person-handle', personHandle)
+      .attr('d', edgePath)
       .attr('fill', 'none')
-      .attr('stroke', 'var(--grampsjs-body-font-color-40)')
-      .attr('stroke-width', 1)
+      .attr('stroke', stroke)
+      .attr('stroke-width', strokeWidth)
+      .attr('stroke-dasharray', strokeDash)
   })
   // edges.selectAll('path').attr('stroke-opacity', '0.4')
 
@@ -736,6 +954,7 @@ export function RelationshipChart(
     nameDisplayFormat = chartNameDisplayFormat.surnameThenGiven,
     canEdit = false,
     initialZoom = null,
+    unionLabel = status => status,
   }
 ) {
   const resultnode = create('div').style('width', '100%')
@@ -771,7 +990,8 @@ export function RelationshipChart(
       getImageUrl,
       maxImages,
       nameDisplayFormat,
-      canEdit
+      canEdit,
+      unionLabel
     )
     svg.attr('viewBox', [
       -bboxWidth / 2,

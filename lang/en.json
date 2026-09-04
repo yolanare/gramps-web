@@ -416,5 +416,10 @@
   "Draw a selection": "Draw a selection",
   "New Blog Post": "New Blog Post",
   "Blog Post": "Blog Post",
-  "Failed to fetch the Blog tag": "Failed to fetch the Blog tag"
+  "Failed to fetch the Blog tag": "Failed to fetch the Blog tag",
+  "Relationship chart legend": "Relationship chart legend",
+  "Parent-child connection": "Parent-child connection",
+  "Each partner's union line uses that person's gender color.": "Each partner's union line uses that person's gender color.",
+  "Divorced": "Divorced",
+  "Widowed": "Widowed"
 }

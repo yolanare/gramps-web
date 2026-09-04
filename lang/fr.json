@@ -357,5 +357,10 @@
     "Fetching place record...": "Récupération de la fiche du lieu...",
     "Zoom in to see event details": "Effectuez un zoom pour voir les détails de l'événement",
     "%s selected": "%s sélectionné(e)",
-    "Exactly two objects must be selected to perform a merge.": "Pour effectuer une fusion, il faut sélectionner exactement deux objets."
+    "Exactly two objects must be selected to perform a merge.": "Pour effectuer une fusion, il faut sélectionner exactement deux objets.",
+    "Relationship chart legend": "Légende du graphique relationnel",
+    "Parent-child connection": "Lien parent-enfant",
+    "Each partner's union line uses that person's gender color.": "La ligne d'union de chaque partenaire utilise sa couleur de genre.",
+    "Divorced": "Divorcés",
+    "Widowed": "Veufs / veuves"
 }

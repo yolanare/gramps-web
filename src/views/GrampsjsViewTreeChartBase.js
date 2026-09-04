@@ -335,6 +335,7 @@ export class GrampsjsViewTreeChartBase extends GrampsjsStaleDataMixin(
                 </td>
               </tr>
             </table>
+            ${this.renderPreferencesExtra()}
           </div>
           <div slot="actions">
             <md-text-button @click="${this._resetLevels}"
@@ -353,6 +354,15 @@ export class GrampsjsViewTreeChartBase extends GrampsjsStaleDataMixin(
   // eslint-disable-next-line class-methods-use-this
   renderChart() {
     return ''
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  renderPreferencesExtra() {
+    return ''
+  }
+
+  get personProfile() {
+    return 'self'
   }
 
   _backToHomePerson() {
@@ -399,7 +409,9 @@ export class GrampsjsViewTreeChartBase extends GrampsjsStaleDataMixin(
     const data = await this.appState.apiGet(
       `/api/people/?rules=${encodeURIComponent(JSON.stringify(rules))}&locale=${
         this.appState.i18n.lang || 'en'
-      }&profile=self&extend=event_ref_list,primary_parent_family,family_list`
+      }&profile=${
+        this.personProfile
+      }&extend=event_ref_list,primary_parent_family,family_list`
     )
     this.loading = false
     if ('data' in data) {

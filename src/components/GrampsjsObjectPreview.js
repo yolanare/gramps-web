@@ -171,6 +171,7 @@ export class GrampsjsObjectPreview extends GrampsjsAppStateMixin(LitElement) {
   // cursor across many chart nodes in quick succession) resolves to a
   // single preview once the cursor settles on one target for SHOW_DELAY ms.
   _handleShow(e) {
+    if (this._mouseInPopup) return
     const detail = e.detail
     clearTimeout(this._hideTimer)
     clearTimeout(this._showTimer)
