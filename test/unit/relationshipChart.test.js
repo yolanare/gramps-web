@@ -172,7 +172,7 @@ describe('relationship chart graph', () => {
     ).toBeNull()
   })
 
-  it('keeps each family marker next to its non-shared partner', async () => {
+  it('keeps family branches aligned without crossings', async () => {
     const families = [
       parentFamily('partner-a-family', 'partner-a', 'shared-person'),
       parentFamily('partner-b-family', 'partner-b', 'shared-person'),
@@ -191,6 +191,21 @@ describe('relationship chart graph', () => {
     const partners = ['partner-a', 'partner-b', 'partner-c']
     const people = nodesByHandle(chart, '.node.person')
     const familyNodes = nodesByHandle(chart, '.node.family')
+    for (const edge of chart.querySelectorAll('.descent-edge')) {
+      const [sourceX, targetX] = edgeEndPointsX(edge)
+      const familyNode = familyNodes.get(
+        edge.getAttribute('data-family-handle')
+      )
+      const childNode = people.get(
+        edge.getAttribute('data-target-person-handle')
+      )
+      const childWidth = Number(
+        childNode.querySelector('.personBox').getAttribute('width')
+      )
+
+      expect(sourceX).toBeCloseTo(translatedX(familyNode))
+      expect(targetX).toBeCloseTo(translatedX(childNode) + childWidth / 2)
+    }
     for (const partner of partners) {
       const partnerX = translatedX(people.get(partner))
       const familyNode = familyNodes.get(`${partner}-family`)

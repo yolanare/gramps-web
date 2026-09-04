@@ -318,9 +318,10 @@ function generateDot(graph) {
       ? personNodeId(e.sourcePerson)
       : familyNodeId(e.sourceFamily)
     const target = personNodeId(e.targetPerson)
-    const descentClass = e.sourcePerson
-      ? 'descent_edge'
-      : `descent_edge descent_family_${e.sourceFamily}`
+    const sourceClass = e.sourcePerson
+      ? `descent_source_person_${e.sourcePerson}`
+      : `descent_family_${e.sourceFamily}`
+    const descentClass = `descent_edge ${sourceClass} descent_target_person_${e.targetPerson}`
     dot += `"${source}" -> "${target}" [class="${descentClass}", label="", arrowhead=none, color="#555"]
       `
   }
@@ -724,6 +725,7 @@ function remasterChart(
     new Map(nodedata.filter(d => d.nodetype === type).map(d => [d.handle, d]))
   const familyData = dataByType('family')
   const personData = dataByType('person')
+  const personCenterX = d => d.xCoord + boxWidth / 2
   const deceasedSide = d => {
     if (!d.deceasedPartner) return undefined
     return personData.get(d.deceasedPartner).xCoord < d.xCoord
@@ -807,29 +809,17 @@ function remasterChart(
   gvchartx.selectAll('.edge').each(function () {
     const edge = select(this)
     const edgeClass = edge.attr('class') ?? ''
-    const pathData = edge.select('path').attr('d')
-    // extract points from path data
-    const points = pathData
-      ?.match(/-?[\d.]+,-?[\d.]+/g) // Find all "x,y" pairs
-      ?.map(d => d.split(',').map(Number)) // Convert to [x, y] arrays
-    if (!points || points.length < 2)
-      throw new Error(`Invalid Graphviz edge path: ${pathData}`)
-    // we use only the start and end point
-    const firstPoint = points[0]
-    const lastPoint = points.at(-1)
-    // we replace the polyline with a smooth connector from start to end
     const personHandle = edgeClass.match(/union_person_([^\s]+)/)?.[1]
     const familyHandle = edgeClass.match(/union_family_([^\s]+)/)?.[1]
     const descentFamilyHandle = edgeClass.match(/descent_family_([^\s]+)/)?.[1]
+    const descentSourcePersonHandle = edgeClass.match(
+      /descent_source_person_([^\s]+)/
+    )?.[1]
+    const descentTargetPersonHandle = edgeClass.match(
+      /descent_target_person_([^\s]+)/
+    )?.[1]
     const isUnion = edgeClass.includes('union_edge')
-    const targetPoint = {
-      x: lastPoint[0],
-      y: lastPoint[1],
-    }
-    let edgePath = linkGenerator({
-      source: {x: firstPoint[0], y: firstPoint[1]},
-      target: targetPoint,
-    })
+    let edgePath
     let stroke = 'var(--grampsjs-body-font-color-40)'
     let strokeWidth = 1
     let strokeDash = null
@@ -841,7 +831,7 @@ function remasterChart(
       const personDatum = personData.get(personHandle)
       const y = familyDatum.yCoord + familyMarkerY(familyDatum)
       const direction = Math.sign(
-        familyDatum.xCoord - (personDatum.xCoord + boxWidth / 2)
+        familyDatum.xCoord - personCenterX(personDatum)
       )
       const personX = personDatum.xCoord + (direction > 0 ? boxWidth : 0)
       const familyX = familyDatum.xCoord
@@ -894,19 +884,31 @@ function remasterChart(
             .attr('stop-opacity', stop.opacity)
         stroke = `url(#${gradientId})`
       }
-    } else if (descentFamilyHandle) {
-      const familyDatum = familyData.get(descentFamilyHandle)
-      const y = familyDatum.yCoord + familyMarkerY(familyDatum)
-      edgePath = linkGenerator({
-        source: {x: familyDatum.xCoord, y},
-        target: targetPoint,
-      })
+    } else {
+      const targetDatum = personData.get(descentTargetPersonHandle)
+      const target = {x: personCenterX(targetDatum), y: targetDatum.yCoord}
+      let source
+      if (descentFamilyHandle) {
+        const familyDatum = familyData.get(descentFamilyHandle)
+        source = {
+          x: familyDatum.xCoord,
+          y: familyDatum.yCoord + familyMarkerY(familyDatum),
+        }
+      } else {
+        const sourceDatum = personData.get(descentSourcePersonHandle)
+        source = {
+          x: personCenterX(sourceDatum),
+          y: sourceDatum.yCoord + boxHeight,
+        }
+      }
+      edgePath = linkGenerator({source, target})
     }
     edges
       .append('path')
       .attr('class', isUnion ? 'edge union-edge' : 'edge descent-edge')
       .attr('data-family-handle', familyHandle ?? descentFamilyHandle)
       .attr('data-person-handle', personHandle)
+      .attr('data-target-person-handle', descentTargetPersonHandle)
       .attr('d', edgePath)
       .attr('fill', 'none')
       .attr('stroke', stroke)
